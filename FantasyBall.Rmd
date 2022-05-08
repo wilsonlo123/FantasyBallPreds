@@ -1,0 +1,592 @@
+---
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Predict the possible best 5 players in each position for next year's fantasy basketball season based on this season.
+
+Libraries
+```{r}
+library(glmnet)
+```
+
+Import Dataset and making sure that the names only have the actual player names and not a short form. Does not format for international player names.
+```{r}
+#Dataset for most recent season
+data = read.csv("ballData.csv", header = TRUE)
+data$obs = c(1:length(data[,1]))
+data$Player = gsub("\\\\.*$", "", data$Player)
+```
+
+Make data smaller, while also leaving out all possible NA values
+```{r}
+#make a dataset that isn't as big, we use players who played more than 1/4 of the season, so
+#anyone who played more than 20 games
+
+data = data[data$G > 20,]
+data = na.omit(data) 
+```
+
+
+Using Yahoo fantasy basketball default settings for points. 1 FGM, 1 FTM, 3 3PM, 0.5 P, 1.5 TRB
+2 AST, 3 STL, 3 Blk, -2 TOVs. We use this to calculate our y variable.
+
+```{r}
+
+data$y = data$FG + data$FT + 3 * data$X3P + 0.5 * data$PTS + 1.5 * data$TRB + 2 * data$AST + 3 * data$STL +
+  data$BLK * 3 - 2 * data$TOV
+```
+
+
+Splitting data where the primary position is pg, sg, sf, pf, c
+```{r}
+pgData = data[data$Pos == "PG" | data$Pos == "PG-SG",]
+sgData = data[data$Pos == "SG" | data$Pos == "SG-PG" | data$Pos == "SG-SF",]
+sfData = data[data$Pos == "SF" | data$Pos == "SF-SG",]
+pfData = data[data$Pos == "PF" | data$Pos == "PF-SF",]
+cData = data[data$Pos == "C" | data$Pos == "C-PF",]  
+```
+
+Now we can perform a simple linear regression. Also want to weight the regression based on how many games a player plays.
+```{r}
+weights = data$G / 82
+data$weights = weights
+model1 = lm(y ~ FG + FT + X3P + PTS + TRB + AST + STL + BLK - TOV, weights = weights, data = data)
+summary(model1)
+```
+
+
+Using Lasso Regression
+```{r}
+x = as.matrix(data[, c("FG", "FT", "X3P", "PTS", "TRB", "AST", "STL", "BLK", "TOV")])
+cvModel = cv.glmnet(x, data$y, alpha = 1)
+lambda = cvModel$lambda.min
+plot(cvModel)
+model2 = glmnet(x, data$y, alpha = 1, lambda = lambda)
+coef(model2)
+```
+
+
+Using Ridge Regression
+```{r}
+model3 = glmnet(x, data$y, alpha = 0)
+cvModel2 = cv.glmnet(x, data$y, alpha = 0)
+lambda2 = cvModel2$lambda.min
+plot(cvModel2)
+model3Best = glmnet(x, data$y, alpha = 0, lambda = lambda2)
+coef(model3Best)
+```
+
+Predicting the fantasy points players will get next year using each model
+```{r}
+#using regular regression
+pg1 = predict(model1, pgData)
+sg1 = predict(model1, sgData)
+sf1 = predict(model1, sfData)
+pf1 = predict(model1, pfData)
+c1 = predict(model1, cData)
+
+#using lasso regression
+pg2 = predict(model2, s = lambda, data.matrix(pgData[,4:12]))
+sg2 = predict(model2, s = lambda, data.matrix(sgData[,4:12]))
+sf2 = predict(model2,  s = lambda, data.matrix(sfData[,4:12]))
+pf2 = predict(model2,  s = lambda, data.matrix(pfData[,4:12]))
+c2 = predict(model2,  s = lambda, data.matrix(cData[,4:12]))
+
+#using ridge regression
+pg3 = predict(model3Best, s = lambda2, data.matrix(pgData[,4:12]))
+sg3 = predict(model3Best, s = lambda2, data.matrix(sgData[,4:12]))
+sf3 = predict(model3Best, s = lambda2, data.matrix(sfData[,4:12]))
+pf3 = predict(model3Best, s = lambda2, data.matrix(pfData[,4:12]))
+c3 = predict(model3Best, s = lambda2, data.matrix(cData[,4:12]))
+```
+
+Getting the predicted top 5 players in each position for next year from each model
+Create a function to find the top 5 players indexes in the sub datasets
+```{r}
+#function to get the index of the top 5 players
+top5 = function(x) {
+  result = c(1:5)
+  temp = 1
+  best = tail(sort(x), 5)
+  for(j in 1:5) {
+    for(i in 1: length(x)) {
+      if (x[i] == best[j]) {
+        result[temp] = i
+        temp = temp + 1
+      }
+    } 
+  }
+  return(result)
+} 
+```
+
+Getting the top 5 players from first model in each position
+```{r}
+pgBest1 = top5(pg1)
+topPG1 = c(1:5)
+topPG1[1] = pgData[pgBest1[5],]$Player
+topPG1[2] = pgData[pgBest1[4],]$Player
+topPG1[3] = pgData[pgBest1[3],]$Player
+topPG1[4] = pgData[pgBest1[2],]$Player
+topPG1[5] = pgData[pgBest1[1],]$Player
+
+sgBest1 = top5(sg1)
+topSG1 = c(1:5)
+topSG1[1] = sgData[sgBest1[5],]$Player
+topSG1[2] = sgData[sgBest1[4],]$Player
+topSG1[3] = sgData[sgBest1[3],]$Player
+topSG1[4] = sgData[sgBest1[2],]$Player
+topSG1[5] = sgData[sgBest1[1],]$Player
+
+sfBest1 = top5(sf1)
+topSF1 = c(1:5)
+topSF1[1] = sfData[sfBest1[5],]$Player
+topSF1[2] = sfData[sfBest1[4],]$Player
+topSF1[3] = sfData[sfBest1[3],]$Player
+topSF1[4] = sfData[sfBest1[2],]$Player
+topSF1[5] = sfData[sfBest1[1],]$Player
+
+pfBest1 = top5(pf1)
+topPF1 = c(1:5)
+topPF1[1] = pfData[pfBest1[5],]$Player
+topPF1[2] = pfData[pfBest1[4],]$Player
+topPF1[3] = pfData[pfBest1[3],]$Player
+topPF1[4] = pfData[pfBest1[2],]$Player
+topPF1[5] = pfData[pfBest1[1],]$Player
+
+cBest1 = top5(c1)
+topC1 = c(1:5)
+topC1[1] = cData[cBest1[5],]$Player
+topC1[2] = cData[cBest1[4],]$Player
+topC1[3] = cData[cBest1[3],]$Player
+topC1[4] = cData[cBest1[2],]$Player
+topC1[5] = cData[cBest1[1],]$Player
+```
+
+getting top 5 players using model 2
+```{r}
+pgBest2 = top5(pg2)
+topPG2 = c(1:5)
+topPG2[1] = pgData[pgBest2[5],]$Player
+topPG2[2] = pgData[pgBest2[4],]$Player
+topPG2[3] = pgData[pgBest2[3],]$Player
+topPG2[4] = pgData[pgBest2[2],]$Player
+topPG2[5] = pgData[pgBest2[1],]$Player
+
+sgBest2 = top5(sg2)
+topSG2 = c(1:5)
+topSG2[1] = sgData[sgBest2[5],]$Player
+topSG2[2] = sgData[sgBest2[4],]$Player
+topSG2[3] = sgData[sgBest2[3],]$Player
+topSG2[4] = sgData[sgBest2[2],]$Player
+topSG2[5] = sgData[sgBest2[1],]$Player
+
+sfBest2 = top5(sf2)
+topSF2 = c(1:5)
+topSF2[1] = sfData[sfBest2[5],]$Player
+topSF2[2] = sfData[sfBest2[4],]$Player
+topSF2[3] = sfData[sfBest2[3],]$Player
+topSF2[4] = sfData[sfBest2[2],]$Player
+topSF2[5] = sfData[sfBest2[1],]$Player
+
+pfBest2 = top5(pf2)
+topPF2 = c(1:5)
+topPF2[1] = pfData[pfBest2[5],]$Player
+topPF2[2] = pfData[pfBest2[4],]$Player
+topPF2[3] = pfData[pfBest2[3],]$Player
+topPF2[4] = pfData[pfBest2[2],]$Player
+topPF2[5] = pfData[pfBest2[1],]$Player
+
+cBest2 = top5(c2)
+topC2 = c(1:5)
+topC2[1] = cData[cBest2[5],]$Player
+topC2[2] = cData[cBest2[4],]$Player
+topC2[3] = cData[cBest2[3],]$Player
+topC2[4] = cData[cBest2[2],]$Player
+topC2[5] = cData[cBest2[1],]$Player
+```
+
+top 5 players in each position using 3rd model
+```{r}
+pgBest3 = top5(pg3)
+topPG3 = c(1:5)
+topPG3[1] = pgData[pgBest3[5],]$Player
+topPG3[2] = pgData[pgBest3[4],]$Player
+topPG3[3] = pgData[pgBest3[3],]$Player
+topPG3[4] = pgData[pgBest3[2],]$Player
+topPG3[5] = pgData[pgBest3[1],]$Player
+
+sgBest3 = top5(sg3)
+topSG3 = c(1:5)
+topSG3[1] = sgData[sgBest3[5],]$Player
+topSG3[2] = sgData[sgBest3[4],]$Player
+topSG3[3] = sgData[sgBest3[3],]$Player
+topSG3[4] = sgData[sgBest3[2],]$Player
+topSG3[5] = sgData[sgBest3[1],]$Player
+
+sfBest3 = top5(sf3)
+topSF3 = c(1:5)
+topSF3[1] = sfData[sfBest3[5],]$Player
+topSF3[2] = sfData[sfBest3[4],]$Player
+topSF3[3] = sfData[sfBest3[3],]$Player
+topSF3[4] = sfData[sfBest3[2],]$Player
+topSF3[5] = sfData[sfBest3[1],]$Player
+
+pfBest3 = top5(pf3)
+topPF3 = c(1:5)
+topPF3[1] = pfData[pfBest3[5],]$Player
+topPF3[2] = pfData[pfBest3[4],]$Player
+topPF3[3] = pfData[pfBest3[3],]$Player
+topPF3[4] = pfData[pfBest3[2],]$Player
+topPF3[5] = pfData[pfBest3[1],]$Player
+
+cBest3 = top5(c3)
+topC3 = c(1:5)
+topC3[1] = cData[cBest3[5],]$Player
+topC3[2] = cData[cBest3[4],]$Player
+topC3[3] = cData[cBest3[3],]$Player
+topC3[4] = cData[cBest3[2],]$Player
+topC3[5] = cData[cBest3[1],]$Player
+```
+
+Have more than 5 names when you look at all models. Need to take an average of where players placed in each model to get a real top 5.
+Top 5 C
+```{r}
+cAvg = matrix(nrow = 2, ncol = 7)
+counter = 1
+for(i in 1:5) {
+  cAvg[1,i] = topC1[i]
+  cAvg[2,i] = i
+}
+
+for(i in 1:5) {
+  if (topC2[i] %in% cAvg) {
+    for (j in 1:7) {
+      if(cAvg[1,j] == topC2[i]) {
+        cAvg[2,j] = as.numeric(cAvg[2,j]) + i
+        break
+      }
+    }
+  } else {
+    cAvg[1, 5 + counter] = topC2[i]
+    cAvg[2, 5 + counter] = i + 6
+    counter = counter + 1
+  }
+  if(topC1[i] %in% topC2) {
+    
+  } else {
+    for (j in 1:7) {
+      if(cAvg[1,j] == topC1[i]) {
+        cAvg[2,j] = as.numeric(cAvg[2,j]) + 6
+        break
+      }
+    }
+  }
+}
+
+for(i in 1:5) {
+  if (topC3[i] %in% cAvg) {
+    for (j in 1:7) {
+      if(cAvg[1,j] == topC3[i]) {
+        cAvg[2,j] = as.numeric(cAvg[2,j]) + i
+        break
+      }
+    }
+  }
+}
+
+for(i in 1:7) {
+  if(cAvg[1,i] %in% topC3) {
+    
+  } else {
+    cAvg[2,i] = as.numeric(cAvg[2,i]) + 6
+  }
+}
+
+for(i in 1:7) {
+  cAvg[2,i] = as.numeric(cAvg[2,i]) / 3
+}
+
+topC = c(1:5)
+
+for(i in 1:5) {
+  topC[i] = cAvg[1,which.min(as.numeric(cAvg[2,]))]
+  cAvg = subset(cAvg, select = -c(which.min(as.numeric(cAvg[2,]))))
+}
+```
+
+top 5 PF
+```{r}
+pfAvg = matrix(nrow = 2, ncol = 6)
+pfounter = 1
+for(i in 1:5) {
+  pfAvg[1,i] = topPF1[i]
+  pfAvg[2,i] = i
+}
+
+for(i in 1:5) {
+  if (topPF2[i] %in% pfAvg) {
+    for (j in 1:6) {
+      if(pfAvg[1,j] == topPF2[i]) {
+        pfAvg[2,j] = as.numeric(pfAvg[2,j]) + i
+        break
+      }
+    }
+  } else {
+    pfAvg[1, 5 + pfounter] = topPF2[i]
+    pfAvg[2, 5 + pfounter] = i + 6
+    pfounter = pfounter + 1
+  }
+  if(topPF1[i] %in% topPF2) {
+    
+  } else {
+    for (j in 1:6) {
+      if(pfAvg[1,j] == topPF1[i]) {
+        pfAvg[2,j] = as.numeric(pfAvg[2,j]) + 6
+        break
+      }
+    }
+  }
+}
+
+for(i in 1:5) {
+  if (topPF3[i] %in% pfAvg) {
+    for (j in 1:6) {
+      if(pfAvg[1,j] == topPF3[i]) {
+        pfAvg[2,j] = as.numeric(pfAvg[2,j]) + i
+        break
+      }
+    }
+  }
+}
+
+for(i in 1:6) {
+  if(pfAvg[1,i] %in% topPF3) {
+    
+  } else {
+    pfAvg[2,i] = as.numeric(pfAvg[2,i]) + 6
+  }
+}
+
+for(i in 1:6) {
+  pfAvg[2,i] = as.numeric(pfAvg[2,i]) / 3
+}
+
+topPF = c(1:5)
+
+for(i in 1:5) {
+  topPF[i] = pfAvg[1,which.min(as.numeric(pfAvg[2,]))]
+  pfAvg = subset(pfAvg, select = -c(which.min(as.numeric(pfAvg[2,]))))
+}
+```
+
+top 5 sf
+```{r}
+sfAvg = matrix(nrow = 2, ncol = 7)
+sfounter = 1
+for(i in 1:5) {
+  sfAvg[1,i] = topSF1[i]
+  sfAvg[2,i] = i
+}
+
+for(i in 1:5) {
+  if (topSF2[i] %in% sfAvg) {
+    for (j in 1:7) {
+      if(sfAvg[1,j] == topSF2[i]) {
+        sfAvg[2,j] = as.numeric(sfAvg[2,j]) + i
+        break
+      }
+    }
+  } else {
+    sfAvg[1, 5 + sfounter] = topSF2[i]
+    sfAvg[2, 5 + sfounter] = i + 7
+    sfounter = sfounter + 1
+  }
+  if(topSF1[i] %in% topSF2) {
+    
+  } else {
+    for (j in 1:7) {
+      if(sfAvg[1,j] == topSF1[i]) {
+        sfAvg[2,j] = as.numeric(sfAvg[2,j]) + 7
+        break
+      }
+    }
+  }
+}
+
+for(i in 1:5) {
+  if (topSF3[i] %in% sfAvg) {
+    for (j in 1:7) {
+      if(sfAvg[1,j] == topSF3[i]) {
+        sfAvg[2,j] = as.numeric(sfAvg[2,j]) + i
+        break
+      }
+    }
+  }
+}
+
+for(i in 1:7) {
+  if(sfAvg[1,i] %in% topSF3) {
+    
+  } else {
+    sfAvg[2,i] = as.numeric(sfAvg[2,i]) + 7
+  }
+}
+
+for(i in 1:7) {
+  sfAvg[2,i] = as.numeric(sfAvg[2,i]) / 3
+}
+
+topSF = c(1:5)
+
+for(i in 1:5) {
+  topSF[i] = sfAvg[1,which.min(as.numeric(sfAvg[2,]))]
+  sfAvg = subset(sfAvg, select = -c(which.min(as.numeric(sfAvg[2,]))))
+}
+```
+
+top 5 sgs
+```{r}
+sgAvg = matrix(nrow = 2, ncol = 7)
+sgounter = 1
+for(i in 1:5) {
+  sgAvg[1,i] = topSG1[i]
+  sgAvg[2,i] = i
+}
+
+for(i in 1:5) {
+  if (topSG2[i] %in% sgAvg) {
+    for (j in 1:7) {
+      if(sgAvg[1,j] == topSG2[i]) {
+        sgAvg[2,j] = as.numeric(sgAvg[2,j]) + i
+        break
+      }
+    }
+  } else {
+    sgAvg[1, 5 + sgounter] = topSG2[i]
+    sgAvg[2, 5 + sgounter] = i + 7
+    sgounter = sgounter + 1
+  }
+  if(topSG1[i] %in% topSG2) {
+    
+  } else {
+    for (j in 1:7) {
+      if(sgAvg[1,j] == topSG1[i]) {
+        sgAvg[2,j] = as.numeric(sgAvg[2,j]) + 7
+        break
+      }
+    }
+  }
+}
+
+for(i in 1:5) {
+  if (topSG3[i] %in% sgAvg) {
+    for (j in 1:7) {
+      if(sgAvg[1,j] == topSG3[i]) {
+        sgAvg[2,j] = as.numeric(sgAvg[2,j]) + i
+        break
+      }
+    }
+  }
+}
+
+for(i in 1:7) {
+  if(sgAvg[1,i] %in% topSG3) {
+    
+  } else {
+    sgAvg[2,i] = as.numeric(sgAvg[2,i]) + 7
+  }
+}
+
+for(i in 1:7) {
+  sgAvg[2,i] = as.numeric(sgAvg[2,i]) / 3
+}
+
+topSG = c(1:5)
+
+for(i in 1:5) {
+  topSG[i] = sgAvg[1,which.min(as.numeric(sgAvg[2,]))]
+  sgAvg = subset(sgAvg, select = -c(which.min(as.numeric(sgAvg[2,]))))
+}
+```
+
+top 5 pgs
+```{r}
+pgAvg = matrix(nrow = 2, ncol = 6)
+pgounter = 1
+for(i in 1:5) {
+  pgAvg[1,i] = topPG1[i]
+  pgAvg[2,i] = i
+}
+
+for(i in 1:5) {
+  if (topPG2[i] %in% pgAvg) {
+    for (j in 1:6) {
+      if(pgAvg[1,j] == topPG2[i]) {
+        pgAvg[2,j] = as.numeric(pgAvg[2,j]) + i
+        break
+      }
+    }
+  } else {
+    pgAvg[1, 5 + pgounter] = topPG2[i]
+    pgAvg[2, 5 + pgounter] = i + 6
+    pgounter = pgounter + 1
+  }
+  if(topPG1[i] %in% topPG2) {
+    
+  } else {
+    for (j in 1:6) {
+      if(pgAvg[1,j] == topPG1[i]) {
+        pgAvg[2,j] = as.numeric(pgAvg[2,j]) + 6
+        break
+      }
+    }
+  }
+}
+
+for(i in 1:5) {
+  if (topPG3[i] %in% pgAvg) {
+    for (j in 1:6) {
+      if(pgAvg[1,j] == topPG3[i]) {
+        pgAvg[2,j] = as.numeric(pgAvg[2,j]) + i
+        break
+      }
+    }
+  }
+}
+
+for(i in 1:6) {
+  if(pgAvg[1,i] %in% topPG3) {
+    
+  } else {
+    pgAvg[2,i] = as.numeric(pgAvg[2,i]) + 6
+  }
+}
+
+for(i in 1:6) {
+  pgAvg[2,i] = as.numeric(pgAvg[2,i]) / 3
+}
+
+topPG = c(1:5)
+
+for(i in 1:5) {
+  topPG[i] = pgAvg[1,which.min(as.numeric(pgAvg[2,]))]
+  pgAvg = subset(pgAvg, select = -c(which.min(as.numeric(pgAvg[2,]))))
+}
+```
+
+Table of top 5 players in each position
+```{r}
+table = matrix(nrow = 5, ncol = 5)
+table[,1] = topPG
+table[,2] = topSG
+table[,3] = topSF
+table[,4] = topPF
+table[,5] = topC
+colnames(table) = c("pg","sg","sf","pf","c")
+table
+```
